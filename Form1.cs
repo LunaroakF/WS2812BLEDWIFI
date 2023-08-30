@@ -3,9 +3,11 @@ using System.Collections.Generic;
 using System.ComponentModel;
 using System.Data;
 using System.Drawing;
+using System.Drawing.Imaging;
 using System.Linq;
 using System.Net;
 using System.Net.Sockets;
+using System.Security.Permissions;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
@@ -15,7 +17,12 @@ namespace WS2812BLEDWIFI
 {
     public partial class Form1 : Form
     {
-        public IPEndPoint ipep = new IPEndPoint(IPAddress.Parse("192.168.0.121"), 610);
+        public static string IP = "192.168.0.114";
+        public static int Port = 610;
+        public int range = 5;
+        public int ScreenWidth = 2560;
+        public int ScreenHeight = 1440;
+        public IPEndPoint ipep = new IPEndPoint(IPAddress.Parse(IP), Port);
         //定义网络类型，数据连接类型和网络协议UDP
         public Socket PublicRemote = new Socket(AddressFamily.InterNetwork, SocketType.Dgram, ProtocolType.Udp);
         public Bitmap screen = null;
@@ -24,10 +31,66 @@ namespace WS2812BLEDWIFI
             InitializeComponent();
         }
 
+        [SecurityPermission(SecurityAction.LinkDemand,
+            Flags = SecurityPermissionFlag.UnmanagedCode)]
+        public static unsafe Color GetImageAverageColor(Bitmap bitmap)
+        {
+            if (bitmap == null)
+            {
+                throw new ArgumentNullException("bitmap");
+            }
+
+            int width = bitmap.Width;
+            int height = bitmap.Height;
+            Rectangle rect = new Rectangle(0, 0, width, height);
+
+            try
+            {
+                BitmapData bitmapData = bitmap.LockBits(
+                    rect, ImageLockMode.ReadOnly, PixelFormat.Format32bppArgb);
+                byte* scan0 = (byte*)bitmapData.Scan0;
+                int strideOffset = bitmapData.Stride - bitmapData.Width * 4;
+
+                int sum = width * height;
+
+                int a = 0;
+                int r = 0;
+                int g = 0;
+                int b = 0;
+
+                for (int i = 0; i < height; i++)
+                {
+                    for (int j = 0; j < width; j++)
+                    {
+                        b += *scan0++;
+                        g += *scan0++;
+                        r += *scan0++;
+                        a += *scan0++;
+                    }
+                    scan0 += strideOffset;
+                }
+
+                bitmap.UnlockBits(bitmapData);
+
+                a /= sum;
+                r /= sum;
+                g /= sum;
+                b /= sum;
+
+                return Color.FromArgb(255, r, g, b);
+            }
+            catch
+            {
+                return Color.FromArgb(127, 127, 127);
+            }
+        }
+
+
+
         private void Form1_Load(object sender, EventArgs e)
         {
             var point = new Point();
-            point.X = 1440;
+            point.X = ScreenHeight;
             point.Y = 1;
             ConnectItem();
             //MessageBox.Show(GetColorFromScreen(point).R.ToString());
@@ -81,9 +144,26 @@ namespace WS2812BLEDWIFI
             p.Dispose();
             return bmpScreenCapture;
         }
+        private Bitmap crop(Bitmap src, Rectangle cropRect)
+        {
+            //Rectangle cropRect = new Rectangle(0, 0, 400, 400);
+            Bitmap target = new Bitmap(cropRect.Width, cropRect.Height);
+            
+            using (Graphics g = Graphics.FromImage(target))
+            {
+                g.DrawImage(src, new Rectangle(0, 0, target.Width, target.Height),
+                      cropRect,
+                      GraphicsUnit.Pixel);
+            }
+            return target;
+        }
+
         public Color GetColorFromScreen(Point p)
         {
-            Color c = screen.GetPixel(p.X, p.Y);
+            
+            Color c = GetImageAverageColor(crop(screen, new Rectangle(p.X - range, p.Y - range, range*2+1, range*2+1)));
+
+            //Color c = screen.GetPixel(p.X, p.Y);
             //screen.Dispose();
             return c;
         }
@@ -100,7 +180,6 @@ namespace WS2812BLEDWIFI
                 //ConnectItem();
                 throw;
             }
-            
         }
 
 
@@ -115,7 +194,7 @@ namespace WS2812BLEDWIFI
           //横初始像素 73公差71，竖初始像素 80公差68
             while (true) 
             {
-                System.Threading.Thread.Sleep(8);
+                //System.Threading.Thread.Sleep(1);
                 var point = new Point();
                 screen = CaptureFromScreen();
                 String H1 = null;
@@ -141,8 +220,8 @@ namespace WS2812BLEDWIFI
                 //纵向
                 for (int i = 0; i < 2; i++)
                 {
-                    if (i == 0) { point.X = 256; }
-                    else { point.X = 2304; }
+                    if (i == 0) { point.X = Convert.ToInt32(2560 * (1-0.9)); }
+                    else { point.X = Convert.ToInt32(2560*0.9); }
                     for (int j = 0; j < 20; j++)
                     {
                         if (i == 0) { point.Y = 1440 - 2 - ((j + 1) * 68); }
@@ -164,8 +243,33 @@ namespace WS2812BLEDWIFI
         {
             button2.Enabled = false;
             button2.Text = "运行中";
+            IP = textBox1.Text;
+            Port = int.Parse(textBox2.Text);
+            ipep = new IPEndPoint(IPAddress.Parse(IP), Port);
+            range = int.Parse(textBox4.Text);
             Thread thread = new Thread(new ThreadStart(AutoRun));
             thread.Start();
+        }
+
+        private void button1_Click(object sender, EventArgs e)
+        {
+            Upload(textBox3.Text, PublicRemote);
+        }
+
+        private void Form1_FormClosing(object sender, FormClosingEventArgs e)
+        {
+            Upload("offall", PublicRemote);
+            Environment.Exit(0);
+        }
+
+        private void textBox4_TextChanged(object sender, EventArgs e)
+        {
+            range = int.Parse(textBox4.Text);
+        }
+
+        private void groupBox1_Enter(object sender, EventArgs e)
+        {
+
         }
     }
 }
